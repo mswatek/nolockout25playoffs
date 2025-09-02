@@ -81,8 +81,10 @@ except Exception:
 ##### BRING IN ALL WEEKS #####
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)  # 600 seconds = 10 minutes
+
 def load_data():
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     all_weeks=pd.DataFrame()
     for i in range(20,22):
         week = league.weeks()[i]
@@ -99,9 +101,14 @@ def load_data():
         frames= [all_weeks,df_wide]
         all_weeks = pd.concat(frames)
 
-    return all_weeks
+    return all_weeks, timestamp
 
-all_weeks = load_data()
+all_weeks, last_updated = load_data()
+st.caption(f"📅 Data last updated: {last_updated}")
+
+if st.button("🔄 Refresh Now"):
+    st.cache_data.clear()
+    st.rerun()
 
 all_weeks=all_weeks.reset_index()
 
