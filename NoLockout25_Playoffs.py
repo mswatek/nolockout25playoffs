@@ -13,7 +13,6 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(layout="wide",page_title="No Lockout! - 2025 Playoffs")
 st.title(":blue[No More Lockouts in MLB! - 2025 Playoffs]")
 
-
 ##### ESTABLISH THE CONNECTION #####
 ##### ESTABLISH THE CONNECTION #####
 ##### ESTABLISH THE CONNECTION #####
@@ -86,7 +85,7 @@ except Exception:
 def load_data():
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     all_weeks=pd.DataFrame()
-    for i in range(20,22):
+    for i in range(20,24):
         week = league.weeks()[i]
         df = pd.DataFrame({'Team':[],'Opponent':[], 'cat':[], 'stat':[]})
         df2 = pd.DataFrame({'Team':[], 'Opponent':[],'cat':[], 'stat':[]})
@@ -187,10 +186,17 @@ all_weeks['OnBase'] = all_weeks['OnBase'].astype(int)
 all_weeks['PA'] = all_weeks['PA'].astype(int)
 
 for index, row in all_weeks.iterrows():
-    while all_weeks.at[index,'OnBase']/all_weeks.at[index,'PA'] - all_weeks.at[index,'OBP'] <-0.0005 :
-        all_weeks.at[index,'OnBase'] = all_weeks.at[index,'OnBase']+1
-        all_weeks.at[index,'PA'] = all_weeks.at[index,'PA']+2
-        all_weeks.at[index,'OBP_New'] = all_weeks.at[index,'OnBase']/all_weeks.at[index,'PA']
+    try:
+        if pd.isna(row['OBP']) or row['OBP'] in [0, 1] or row['PA'] == 0:
+            continue
+        attempts = 0
+        while row['OnBase']/row['PA'] - row['OBP'] < -0.0005 and attempts < 100:
+            row['OnBase'] += 1
+            row['PA'] += 2
+            attempts += 1
+        all_weeks.at[index, 'OBP_New'] = row['OnBase'] / row['PA']
+    except Exception as e:
+        st.warning(f"Row {index} failed OBP adjustment: {e}")
 
 
 #cols = ['Week','R','HR','RBI','SB', 'OBP', 'K', 'ERA', 'WHIP', 'QS','SV+H']
@@ -265,30 +271,111 @@ def scores(df):
 
 semi1, semi2, semi3, semi4, semi5, semi6 = [scores(df) for df in (semi1, semi2, semi3, semi4, semi5, semi6)]
 
+##### FINALS #####
+##### FINALS #####
+##### FINALS #####
+
+df_finals = all_weeks[all_weeks['Week'].isin([23,24])]
+
+df_finals = df_finals.groupby(['Team'])[["OnBase", "PA","R","HR","RBI","SB","Innings","Earned_Runs","Walk_Hits","K","QS","SV+H"]].apply(lambda x : x.sum())
+
+cat_cols = [col for col in df_finals.columns if col in ["R","HR","RBI","SB","K","QS","SV+H","OnBase","PA"]]
+
+for col in cat_cols:
+    df_finals[col] = df_finals[col].astype('int')
+
+df_finals['ERA'] = df_finals['Earned_Runs']/df_finals['Innings']*9
+df_finals['WHIP'] = df_finals['Walk_Hits']/df_finals['Innings']
+df_finals['OBP'] = df_finals['OnBase']/df_finals['PA']
+
+
+df_week24 = all_weeks[all_weeks['Week']==24]
+cols = ['Team','AB','Innings']
+df_week24 = df_week24[cols]
+df_week24.set_index('Team')
+df_week24 = df_week24.rename(columns={'Innings':'Innings_Current'})
+
+df_finals = df_finals.merge(df_week24, left_index=True,right_on='Team')
+
+df_finals['OB/PA'] = df_finals['OnBase'].astype(str)+"/"+ df_finals['PA'].astype(str)+" (Current AB: "+df_finals['AB'].astype(str)+")"
+df_finals['Innings'] = round(df_finals['Innings'],2).astype(str)+" (Current IP: "+ round(df_finals['Innings_Current'],2).astype(str)+")"
+
+
+cols = ['Team','OB/PA','R','HR','RBI','SB', 'OBP', 'Innings', 'K', 'ERA', 'WHIP', 'QS','SV+H']
+df_finals = df_finals[cols]
+df_finals.set_index('Team',inplace=True)
+
+
+##### set up all matchups
+final1 = df_finals[df_finals.index.isin(['Frozen Ropes','Acuña Moncada'])]
+final2 = df_finals[df_finals.index.isin(['Humdingers','Santos L. Halper'])]
+final3 = df_finals[df_finals.index.isin(['Aluminum Power',"El Squeezo Bunto Dos"])]
+final4 = df_finals[df_finals.index.isin(['Bryzzo','The Southwest Servals'])]
+
+
+def scores(df):
+    max_val = df[['R','HR','RBI','SB','OBP','K','QS','SV+H']].max(axis=0)
+    count_max = df.eq(max_val, axis=1).sum(axis=1).reset_index(name ='Total')
+
+    min_val = df[['ERA','WHIP']].min(axis=0)
+    count_min = df.eq(min_val, axis=1).sum(axis=1).reset_index(name ='Total')
+
+    total_1 = pd.concat([count_max,count_min])
+    total_1 = total_1.groupby(['Team'])[["Total"]].apply(lambda x : x.astype(int).sum())
+
+    df = df.merge(total_1, left_on='Team', right_on='Team')
+
+    Total = df['Total'].sum()
+    if Total>10: df['Total'] = df['Total']-((Total-10)/2)
+    else: df['Total'] = df['Total']
+
+    cols = ['OB/PA','R','HR','RBI','SB', 'OBP', 'Innings', 'K', 'ERA', 'WHIP', 'QS','SV+H','Total']
+    df = df[cols]
+
+    return df
+
+final1, final2, final3, final4 = [scores(df) for df in (final1, final2, final3, final4)]
 
 ##### PRINT MATCHUPS #####
 ##### PRINT MATCHUPS #####
 ##### PRINT MATCHUPS #####
 
+tab1, tab2 = st.tabs(["Championship","Semifinals"])
 
+with tab1:
+    st.header("~~~~~~~~ Championship Bracket ~~~~~~~~")
+    st.dataframe(final1.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.dataframe(final2.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.header("~~~~~~~~ Consolation Bracket ~~~~~~~~")
+    st.dataframe(final3.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.dataframe(final4.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
 
-st.header("~~~~~~~~ Championship Bracket ~~~~~~~~")
-st.dataframe(semi1.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
-    .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
-    .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
-st.dataframe(semi2.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
-    .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
-    .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
-st.dataframe(semi3.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
-    .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
-    .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
-st.header("~~~~~~~~ Consolation Bracket ~~~~~~~~")
-st.dataframe(semi4.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
-    .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
-    .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
-st.dataframe(semi5.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
-    .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
-    .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
-st.dataframe(semi6.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
-    .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
-    .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+with tab2:
+    st.header("~~~~~~~~ Championship Bracket ~~~~~~~~")
+    st.dataframe(semi1.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.dataframe(semi2.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.dataframe(semi3.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.header("~~~~~~~~ Consolation Bracket ~~~~~~~~")
+    st.dataframe(semi4.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.dataframe(semi5.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
+    st.dataframe(semi6.style.highlight_max(subset = ['Total','R','HR','RBI', 'SB', 'OBP', 'K', 'QS', 'SV+H'], color = 'lightgreen', axis = 0)
+        .highlight_min(subset = ['ERA','WHIP'], color = 'lightgreen', axis = 0)
+        .format({'ERA': "{:.2f}",'WHIP': "{:.2f}",'OBP': "{:.3f}",'Total': "{:.1f}"}),use_container_width=True)
